@@ -13,15 +13,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ffmpeg ca-certificates tzdata \
+RUN apk add --no-cache ffmpeg ca-certificates tzdata su-exec \
     && adduser -D -H -u 10001 app
 
 WORKDIR /app
 COPY --from=build /out/astra-moderation /usr/local/bin/astra-moderation
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY policy.json /app/policy.json
 
-RUN mkdir -p /data && chown -R app:app /data /app
-USER app
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && mkdir -p /data && chown -R app:app /data /app
+USER root
 
 ENV MOD_ADDR=:8096 \
     MOD_DATA_DIR=/data \
@@ -32,4 +34,5 @@ EXPOSE 8096
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
     CMD wget -qO- http://127.0.0.1:8096/health >/dev/null || exit 1
 
-ENTRYPOINT ["astra-moderation"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["astra-moderation"]

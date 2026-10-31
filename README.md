@@ -58,6 +58,8 @@ docker compose up -d --build
 curl -s localhost:8096/health
 ```
 
+The container entrypoint fixes ownership of the bind-mounted `./data` directory and then drops privileges to the unprivileged `app` user (uid 10001) — no `chown` needed on the host.
+
 ### From source
 
 ```bash
