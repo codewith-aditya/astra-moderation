@@ -1,7 +1,7 @@
 # Astra Moderation
 
 **Self-hosted image & video content moderation API powered by any vision LLM.**  
-One Go binary, zero runtime dependencies, OpenAI-compatible endpoint, 15-category taxonomy, per-tenant keys and policies, async video jobs with signed webhooks, Prometheus metrics.
+One Go binary, zero third-party Go dependencies, OpenAI-compatible endpoint, 15-category taxonomy, per-tenant keys and policies, async video jobs with signed webhooks, Prometheus metrics.
 
 ```
 Client ──► Go API ──► vLLM / any OpenAI-compatible VLM ──► Policy engine ──► JSON verdict
@@ -43,7 +43,7 @@ It was extracted from a production AI-gateway deployment where it moderates user
 | **Policy engine** | two thresholds per category (review / block), aggressive defaults for `child_safety` |
 | **Async jobs + webhooks** | video jobs with HMAC-SHA256-signed webhook delivery |
 | **Observability** | Prometheus text metrics, structured request logs, append-only event log |
-| **Zero dependencies** | Go standard library only — no cgo, no external packages |
+| **Zero third-party Go dependencies** | Go standard library only — no cgo, no module dependencies. FFmpeg/ffprobe are the only runtime requirements, and only for video. |
 | **Tiny footprint** | one static binary + ffmpeg, runs on a 1 GB VM |
 
 ## Quick start
@@ -111,7 +111,7 @@ curl -s localhost:8096/v1/moderate \
 This project was developed and benchmarked against **`Qwen/Qwen3.8-27B`**, a 27B vision-language model served with vLLM. It is a good default because it combines everything this API needs in one model:
 
 - **Native image + video input** (ViT vision encoder) — no separate media pipeline
-- **256k context** — long videos, frame sequences and batch prompts fit comfortably
+- **256k context window** (the model's maximum) — the serving example below deploys a smaller **32k limit** that fits typical VRAM budgets; raise `--max-model-len` if you have headroom
 - **Thinking mode that can be disabled** — critical for latency (see below)
 - **Reliable JSON-schema adherence** — guided decoding produces parseable output first try
 
@@ -126,6 +126,8 @@ vllm serve Qwen/Qwen3.8-27B \
 ```
 
 `--limit-mm-per-prompt` matters: if video is set to `0`, native `video_url` requests fail with *"At most 0 video(s) may be provided"* — the service detects this and automatically falls back to ffmpeg frame sampling, but enabling video natively is faster and more accurate.
+
+`--max-model-len 32768` is a **deployment** limit, not the model's 256k maximum. Size it to your VRAM and workload; longer limits cost KV-cache memory.
 
 ### Point the service at it
 
@@ -149,9 +151,13 @@ Thinking mode improves reasoning but spends 3–5× the tokens for moderation-st
 
 ### What we measured with this model
 
-- 40 explicit vs 40 benign images: **AUC 0.988, precision 1.00, recall 0.97, F1 0.99**, zero false positives ([full methodology](docs/BENCHMARK.md))
+- 40 explicit vs 40 benign images: **AUC 0.988, precision 1.00, recall 0.97, F1 0.99**, zero false positives ([full methodology, dataset sources and labels](docs/BENCHMARK.md))
 - Native video input verified end-to-end; frame fallback verified against an upstream with `video=0`
 - JSON truncation recovery verified (retry with 1.5× token budget)
+- Every one of these behaviours has an automated test that runs in CI:
+  `internal/api/video_test.go` (native video + ffmpeg frame fallback),
+  `internal/upstream/upstream_test.go` (truncation retry, video part forwarding),
+  `internal/api/api_test.go` (policy, tenancy, rate limits, webhooks, OpenAI shape)
 
 Any OpenAI-compatible multimodal endpoint works the same way — Qwen-VL variants, InternVL, MiniMax M3, or hosted APIs. The model name and URL are configuration, not code.
 
