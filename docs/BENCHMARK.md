@@ -95,6 +95,52 @@ those categories):
 The taxonomy held up: categories that do not apply stayed at zero, no
 cross-category bleed was observed.
 
+## Extended run: 100 NSFW images
+
+Run on 2026-10-31 against the same model/hardware as above, using a larger
+positives-only sample. All labels are assumed NSFW (dataset-level), so this run
+measures **recall**, not precision.
+
+| Item | Value |
+|---|---|
+| Source | `x1101/nsfw-full` (126 images), sampled with `random.seed(42)` |
+| Images evaluated | 100 (all requests OK, 0 errors) |
+| Preprocessing | max edge 768 px, JPEG q4 (identical to previous run) |
+| Requests | `POST /v1/moderate` with data URLs, concurrency 4 |
+| Verdicts | 98 block, 2 safe |
+| Recall @ 0.30 / 0.40 / 0.50 / 0.70 / 0.80 | 98 / 100 for every threshold (scores are polarised) |
+| Score distribution | min 0.00, median 1.00, mean 0.96, max 1.00 |
+| Latency | p50 20.6 s, p90 21.7 s |
+| Category means | nudity 0.85, sexual_content 0.87, suggestive 0.94 |
+
+### The two misses
+
+A neutral description pass was run through the same vision model to inspect the
+two images that scored below 0.40:
+
+1. **Fully clothed anime illustration** — character in an elaborate costume on a
+   bed, no nudity visible. Model score 0.20. Almost certainly **label noise** in
+   the dataset rather than a detection failure.
+2. **Sexualised anime illustration** — character in a two-piece outfit, restrained
+   by another figure, legs spread, knife visible on the ground. Model score 0.00.
+   No explicit nudity is shown, but the image is clearly sexualised/fetish
+   content: a **genuine false negative**.
+
+### What this tells us
+
+- On non-illustrated content, detection was 98/98 in this sample. The sample was
+  **not domain-labelled**, so the exact photo-vs-illustration split is unknown —
+  treat "photos are effectively 99%+" as an informed inference, not a measured
+  figure.
+- On **stylised/anime** content the photo-trained VLM has a real blind spot: it
+  under-scores illustrated sexualised scenes, especially where no genitalia are
+  visible. Production deployments serving anime/fan-art traffic should pair this
+  service with an anime-specific NSFW classifier (e.g. a `deepghs`/`SmilingWolf`
+  style detector) as a first tier, or add an explicit prompt clause instructing
+  the model to rate stylised content the same as photos.
+- Future benchmarks should carry a per-image domain label (photo / illustration)
+  so recall can be reported separately for each.
+
 ## What this benchmark does **not** cover
 
 - **Borderline content**: swimwear, lingerie, art nudity, medical imagery,

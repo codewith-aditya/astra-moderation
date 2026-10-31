@@ -152,6 +152,7 @@ Thinking mode improves reasoning but spends 3–5× the tokens for moderation-st
 ### What we measured with this model
 
 - 40 explicit vs 40 benign images: **AUC 0.988, precision 1.00, recall 0.97, F1 0.99**, zero false positives ([full methodology, dataset sources and labels](docs/BENCHMARK.md))
+- 100 NSFW images (extended run): **98% recall**, 0 errors, two misses — one label-noise illustration and one genuine anime-style false negative ([details](docs/BENCHMARK.md#extended-run-100-nsfw-images))
 - Native video input verified end-to-end; frame fallback verified against an upstream with `video=0`
 - JSON truncation recovery verified (retry with 1.5× token budget)
 - Every one of these behaviours has an automated test that runs in CI:
@@ -296,12 +297,32 @@ Sanity benchmark with a 27B vision model (40 explicit images vs 40 benign photos
 
 Methodology, caveats and how to reproduce: [`docs/BENCHMARK.md`](docs/BENCHMARK.md). These numbers are a sanity check on clean-vs-explicit data, **not** a production guarantee — validate on your own distribution and tune thresholds.
 
+### Extended run — 100 NSFW images
+
+A larger positives-only run (all labels assumed NSFW, so this measures **recall**, not precision):
+
+| Metric | Value |
+|---|---|
+| Images | 100 (sampled with seed 42 from the 126-image `x1101/nsfw-full` set) |
+| Recall @ 0.40 | **98 / 100** (98%) |
+| Verdicts | 98 block, 2 safe |
+| Score median / mean | 1.00 / 0.96 |
+| Latency p50 / p90 | 20.6 s / 21.7 s (same shared GPU) |
+| Requests OK | 100 / 100, 0 errors |
+
+Both misses were **anime-style illustrations**, not photos:
+
+1. A fully clothed character in an elaborate costume — almost certainly **label noise** in the dataset (the model's 0.20 score is defensible).
+2. A sexualised illustration (underwear, restraint theme, weapon in frame) scored 0.00 — a **genuine false negative**. This is the known blind spot of photo-trained vision LLMs on stylised/anime content; pair them with an anime-specific NSFW classifier (or add an explicit "rate stylised/anime content the same as photos" prompt clause) if your traffic contains illustrations.
+
+Practical read: detection on the 98 non-illustration images was 98/98, but the sample was not domain-labelled — treat "photos are effectively 99%+" as an inference, not a measured split. Illustrated content needs extra handling either way. Full details and the honest label caveats are in [`docs/BENCHMARK.md`](docs/BENCHMARK.md#extended-run-100-nsfw-images).
+
 ## Current limitations
 
 - Single-node persistence: JSON files + JSONL event log. Fine for tens of req/s and a few tenants; a Postgres/SQLite driver is on the roadmap for horizontal scaling.
 - Jobs are in-memory: a restart drops queued jobs (results already delivered via webhook are unaffected).
 - No built-in auth UI; keys are managed via the admin API.
-- The model is only as good as your upstream — small VLMs over-flag suggestive content and under-flag stylised violence. Tune thresholds per category.
+- The model is only as good as your upstream — small VLMs over-flag suggestive content and under-flag stylised violence. Tune thresholds per category. Stylised/anime sexualised content is a measured blind spot of photo-trained VLMs — see the extended benchmark run.
 - Not legal advice or a compliance product. Human review remains necessary for enforcement decisions.
 
 ## Roadmap
