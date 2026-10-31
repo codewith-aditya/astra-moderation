@@ -104,6 +104,55 @@ curl -s localhost:8096/v1/moderate \
 }
 ```
 
+## Recommended model: Qwen3.8-27B
+
+This project was developed and benchmarked against **`Qwen/Qwen3.8-27B`**, a 27B vision-language model served with vLLM. It is a good default because it combines everything this API needs in one model:
+
+- **Native image + video input** (ViT vision encoder) — no separate media pipeline
+- **256k context** — long videos, frame sequences and batch prompts fit comfortably
+- **Thinking mode that can be disabled** — critical for latency (see below)
+- **Reliable JSON-schema adherence** — guided decoding produces parseable output first try
+
+### Serving it with vLLM
+
+```bash
+vllm serve Qwen/Qwen3.8-27B \
+  --served-model-name Qwen/Qwen3.8-27B \
+  --max-model-len 32768 \
+  --limit-mm-per-prompt '{"image": 8, "video": 1}' \
+  --port 8000
+```
+
+`--limit-mm-per-prompt` matters: if video is set to `0`, native `video_url` requests fail with *"At most 0 video(s) may be provided"* — the service detects this and automatically falls back to ffmpeg frame sampling, but enabling video natively is faster and more accurate.
+
+### Point the service at it
+
+```bash
+MOD_UPSTREAM_URL=http://127.0.0.1:8000/v1/chat/completions \
+MOD_MODEL=Qwen/Qwen3.8-27B \
+MOD_DISABLE_THINKING=true \
+./bin/astra-moderation
+```
+
+### Measured impact of disabling thinking
+
+`MOD_DISABLE_THINKING=true` sends `chat_template_kwargs: {"enable_thinking": false}`. On the same GPU and prompt:
+
+| Task | Thinking on | Thinking off |
+|---|---|---|
+| Short text reply | 5.5 s | **1.1 s** |
+| Video moderation (2 s clip) | 14.7 s | **4.3 s** |
+
+Thinking mode improves reasoning but spends 3–5× the tokens for moderation-style classification, where the decision is largely perceptual. Disable it unless you are debugging edge cases. Note that guided JSON decoding has its own fixed overhead (~10–18 s per request on a shared GPU in our tests) independent of thinking mode.
+
+### What we measured with this model
+
+- 40 explicit vs 40 benign images: **AUC 0.988, precision 1.00, recall 0.97, F1 0.99**, zero false positives ([full methodology](docs/BENCHMARK.md))
+- Native video input verified end-to-end; frame fallback verified against an upstream with `video=0`
+- JSON truncation recovery verified (retry with 1.5× token budget)
+
+Any OpenAI-compatible multimodal endpoint works the same way — Qwen-VL variants, InternVL, MiniMax M3, or hosted APIs. The model name and URL are configuration, not code.
+
 ## API
 
 | Method | Path | Auth | Description |
