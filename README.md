@@ -19,6 +19,8 @@ Client ──► Go API ──► vLLM / any OpenAI-compatible VLM ──► Pol
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+[GitHub](https://github.com/codewith-aditya) · [LinkedIn](https://www.linkedin.com/in/aditya-wakharkar-29ab10321/) · [Portfolio](https://codewith-aditya.pages.dev/)
+
 ---
 
 ## Why another moderation API?
@@ -257,6 +259,14 @@ Methodology, caveats and how to reproduce: [`docs/BENCHMARK.md`](docs/BENCHMARK.
 ## Contributing
 
 Issues and PRs are welcome. Please run `make vet test race` before opening a PR; CI runs `gofmt`, `go vet` and `go test -race`.
+
+## Author
+
+**Aditya Wakharkar** — builder of Astra AI Gateway / Tantra AI Labs.
+
+- GitHub: [@codewith-aditya](https://github.com/codewith-aditya)
+- LinkedIn: [aditya-wakharkar](https://www.linkedin.com/in/aditya-wakharkar-29ab10321/)
+- Portfolio: [codewith-aditya.pages.dev](https://codewith-aditya.pages.dev/)
 
 ## License
 
