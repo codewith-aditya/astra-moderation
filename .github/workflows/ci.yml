@@ -33,3 +33,10 @@ jobs:
 
       - name: test
         run: go test -race -count=1 ./...
+
+      - name: video fallback test must actually run
+        run: |
+          out=$(go test -count=1 -run TestVideoFrameFallback -v ./internal/api/)
+          echo "$out"
+          echo "$out" | grep -q -- '--- PASS: TestVideoFrameFallback' || {
+            echo "frame-fallback test did not PASS (ffmpeg missing?)"; exit 1; }
