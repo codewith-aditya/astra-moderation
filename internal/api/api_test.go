@@ -23,7 +23,7 @@ import (
 
 const masterKey = "amk_master_test"
 
-func fakeUpstream(t *testing.T) *httptest.Server {
+func fakeUpstreamHandler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	scores := map[string]float64{}
 	for _, c := range schema.Categories {
@@ -44,15 +44,20 @@ func fakeUpstream(t *testing.T) *httptest.Server {
 		"usage": map[string]any{"prompt_tokens": 10, "completion_tokens": 20},
 	}
 	raw, _ := json.Marshal(body)
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(raw)
-	}))
+	}
 }
 
 func newTestServer(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Helper()
-	fake := fakeUpstream(t)
+	return newTestServerWithHandler(t, fakeUpstreamHandler(t))
+}
+
+func newTestServerWithHandler(t *testing.T, h http.Handler) (*httptest.Server, *store.Store) {
+	t.Helper()
+	fake := httptest.NewServer(h)
 	t.Cleanup(fake.Close)
 
 	dir := t.TempDir()

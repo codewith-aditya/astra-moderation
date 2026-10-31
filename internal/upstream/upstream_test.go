@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -64,8 +66,17 @@ func TestModerateParsesStructuredOutput(t *testing.T) {
 
 func TestModerateRetriesOnTruncatedJSON(t *testing.T) {
 	var calls int32
+	var mu sync.Mutex
+	var tokenBudgets []float64
 	valid, _ := json.Marshal(map[string]any{"categories": allScores(0.4), "verdict": "review", "reason": "hmm"})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			MaxTokens float64 `json:"max_tokens"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		tokenBudgets = append(tokenBudgets, body.MaxTokens)
+		mu.Unlock()
 		n := atomic.AddInt32(&calls, 1)
 		if n == 1 {
 			w.Write(completion(`{"categories": {"nudity": 0.9`)) // truncated
@@ -85,6 +96,65 @@ func TestModerateRetriesOnTruncatedJSON(t *testing.T) {
 	}
 	if atomic.LoadInt32(&calls) != 2 {
 		t.Fatalf("calls = %d, want 2", calls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tokenBudgets) != 2 || tokenBudgets[0] != 700 || tokenBudgets[1] != 1050 {
+		t.Fatalf("retry token budgets = %v, want [700 1050]", tokenBudgets)
+	}
+}
+
+func TestVideoPartForwarded(t *testing.T) {
+	var mu sync.Mutex
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		mu.Lock()
+		body = b
+		mu.Unlock()
+		content, _ := json.Marshal(map[string]any{"categories": allScores(0), "verdict": "safe", "reason": ""})
+		w.Write(completion(string(content)))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "fake", "", true, 5*time.Second)
+	parts := []Part{{
+		"type":      "video_url",
+		"video_url": map[string]any{"url": "data:video/mp4;base64,AAAA"},
+	}}
+	if _, _, err := c.Moderate(context.Background(), "video", parts); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d", len(msgs))
+	}
+	msg := msgs[0].(map[string]any)
+	content, _ := msg["content"].([]any)
+	if len(content) < 2 {
+		t.Fatalf("content parts = %d", len(content))
+	}
+	var prompt string
+	var videoURL string
+	for _, p := range content {
+		part := p.(map[string]any)
+		if part["type"] == "text" {
+			prompt, _ = part["text"].(string)
+		}
+		if part["type"] == "video_url" {
+			vu, _ := part["video_url"].(map[string]any)
+			videoURL, _ = vu["url"].(string)
+		}
+	}
+	if !strings.Contains(prompt, "video") {
+		t.Fatalf("prompt does not describe video media: %.120s", prompt)
+	}
+	if videoURL != "data:video/mp4;base64,AAAA" {
+		t.Fatalf("video url = %q", videoURL)
 	}
 }
 
