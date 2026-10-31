@@ -1,0 +1,494 @@
+openapi: 3.0.3
+info:
+  title: Astra Moderation API
+  description: |
+    Self-hosted image and video content moderation API backed by any
+    OpenAI-compatible vision model. Includes tenant API keys, rate limiting,
+    per-tenant policy thresholds, async video jobs with signed webhooks and
+    Prometheus metrics.
+  version: "1.0.0"
+  license:
+    name: MIT
+    url: https://github.com/codewith-aditya/astra-moderation/blob/main/LICENSE
+servers:
+  - url: http://localhost:8096
+    description: local
+
+security:
+  - TenantKey: []
+
+tags:
+  - name: public
+  - name: moderation
+  - name: jobs
+  - name: admin
+
+paths:
+  /health:
+    get:
+      tags: [public]
+      security: []
+      summary: Liveness and model info
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  service: { type: string }
+                  version: { type: string }
+                  model: { type: string }
+                  categories: { type: integer }
+                  uptime_seconds: { type: integer }
+
+  /metrics:
+    get:
+      tags: [public]
+      security: []
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /v1/categories:
+    get:
+      tags: [public]
+      security: []
+      summary: Taxonomy with global thresholds
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        review: { type: number }
+                        block: { type: number }
+                        definition: { type: string }
+
+  /v1/moderate:
+    post:
+      tags: [moderation]
+      summary: Moderate an image or video
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+          application/json:
+            schema:
+              type: object
+              properties:
+                image_url: { type: string, description: http(s) or data URL }
+                video_url: { type: string, description: http(s) or data URL }
+      responses:
+        "200":
+          description: Moderation verdict
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModerationResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "502": { $ref: "#/components/responses/UpstreamError" }
+
+  /v1/moderate/batch:
+    post:
+      tags: [moderation]
+      summary: Moderate up to 32 URLs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inputs]
+              properties:
+                inputs:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: object
+                    properties:
+                      image_url: { type: string }
+                      video_url: { type: string }
+                concurrency:
+                  type: integer
+                  minimum: 1
+                  maximum: 8
+                  default: 4
+      responses:
+        "200":
+          description: Per-input results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/ModerationResponse" }
+
+  /v1/moderations:
+    post:
+      tags: [moderation]
+      summary: OpenAI-compatible moderations endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input]
+              properties:
+                input:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items: { type: string }
+                    - type: array
+                      items:
+                        type: object
+                        properties:
+                          image_url:
+                            type: object
+                            properties:
+                              url: { type: string }
+      responses:
+        "200":
+          description: OpenAI-shaped results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  model: { type: string }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        flagged: { type: boolean }
+                        categories:
+                          type: object
+                          additionalProperties: { type: boolean }
+                        category_scores:
+                          type: object
+                          additionalProperties: { type: number }
+
+  /v1/jobs:
+    post:
+      tags: [jobs]
+      summary: Create an async video moderation job
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+                webhook_url: { type: string, format: uri }
+          application/json:
+            schema:
+              type: object
+              required: [video_url]
+              properties:
+                video_url: { type: string }
+                webhook_url: { type: string, format: uri }
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+                  secret:
+                    type: string
+                    description: shown once; used to verify webhook HMAC
+                  poll: { type: string }
+
+  /v1/jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Get job status and result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/usage:
+    get:
+      tags: [moderation]
+      summary: Tenant usage summary
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 30, minimum: 1, maximum: 365 }
+      responses:
+        "200":
+          description: Aggregated usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant: { type: string }
+                  window_days: { type: integer }
+                  usage: { $ref: "#/components/schemas/UsageSummary" }
+
+  /admin/keys:
+    post:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: Create a tenant key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                rpm: { type: integer, default: 120 }
+      responses:
+        "201":
+          description: Created (plaintext key returned once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  rpm: { type: integer }
+                  key: { type: string }
+    get:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: List tenants
+      responses:
+        "200":
+          description: Tenant list
+
+  /admin/keys/{id}/disable:
+    post:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: Disable a tenant key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Disabled }
+
+  /admin/keys/{id}/policy:
+    post:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: Set or clear a per-tenant policy override
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                policy: { $ref: "#/components/schemas/Policy" }
+                clear: { type: boolean }
+      responses:
+        "200": { description: Updated }
+
+  /admin/usage:
+    get:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: Usage for all tenants or one tenant
+      parameters:
+        - name: tenant
+          in: query
+          schema: { type: string }
+        - name: days
+          in: query
+          schema: { type: integer, default: 30 }
+      responses:
+        "200": { description: Aggregated usage }
+
+  /admin/events:
+    get:
+      tags: [admin]
+      security:
+        - AdminKey: []
+      summary: Recent moderation events
+      parameters:
+        - name: tenant
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+      responses:
+        "200": { description: Event list }
+
+components:
+  securitySchemes:
+    TenantKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    AdminKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: master key from MOD_MASTER_KEY or data/master.key
+
+  schemas:
+    Flag:
+      type: object
+      properties:
+        category: { type: string }
+        score: { type: number }
+        level:
+          type: string
+          enum: [review, block]
+
+    ModerationResponse:
+      type: object
+      properties:
+        id: { type: string }
+        verdict:
+          type: string
+          enum: [safe, review, block]
+        flagged:
+          type: array
+          items: { $ref: "#/components/schemas/Flag" }
+        categories:
+          type: object
+          additionalProperties: { type: number }
+        reason: { type: string }
+        model: { type: string }
+        media_type: { type: string, enum: [image, video] }
+        processing_ms:
+          type: object
+          properties:
+            upstream: { type: integer }
+            total: { type: integer }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        kind: { type: string }
+        status:
+          type: string
+          enum: [queued, running, done, failed]
+        verdict: { type: string }
+        flagged:
+          type: array
+          items: { $ref: "#/components/schemas/Flag" }
+        result: { $ref: "#/components/schemas/ModerationResponse" }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    UsageSummary:
+      type: object
+      properties:
+        total: { type: integer }
+        images: { type: integer }
+        videos: { type: integer }
+        safe: { type: integer }
+        review: { type: integer }
+        block: { type: integer }
+        by_day:
+          type: object
+          additionalProperties: { type: integer }
+
+    Policy:
+      type: object
+      properties:
+        default: { $ref: "#/components/schemas/Threshold" }
+        categories:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Threshold" }
+
+    Threshold:
+      type: object
+      properties:
+        review: { type: number }
+        block: { type: number }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  message: { type: string }
+                  code: { type: integer }
+    NotFound:
+      description: Not found
+    TooLarge:
+      description: Payload too large
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema: { type: string }
+    UpstreamError:
+      description: Upstream model failure

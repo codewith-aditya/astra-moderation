@@ -1,0 +1,13 @@
+{
+  "default": {
+    "review": 0.40,
+    "block": 0.80
+  },
+  "categories": {
+    "child_safety": { "review": 0.10, "block": 0.30 },
+    "sexual_content": { "review": 0.30, "block": 0.70 },
+    "nudity": { "review": 0.30, "block": 0.70 },
+    "graphic_violence": { "review": 0.35, "block": 0.75 },
+    "gore": { "review": 0.35, "block": 0.75 }
+  }
+}
